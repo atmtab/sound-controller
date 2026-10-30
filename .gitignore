@@ -1,0 +1,40 @@
+# Зависимости
+node_modules/
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# Сборка
+dist/
+build/
+*.egg-info/
+
+# Логи и временные файлы
+*.log
+*.tmp
+
+# Окружение и секреты
+.env
+.env.*
+
+# IDE и ОС
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Сборка и установщик
+*.spec
+dist-onefile/
+installer/Output/
+*.ico
+
+# Кэши и отчёты
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Скриншоты и временные файлы
+preview*.png
+*.bak
