@@ -55,3 +55,27 @@ def test_drop_on_same_device_is_noop(qapp):
     box = bay._boxes()[0]
     drag(bay, bay._app_jack(1).toPoint(), box.rect.center().toPoint())
     assert got == []
+
+
+def test_fader_drag_emits_volume(qapp):
+    bay, _apps = make_bay(qapp)
+    bay.set_volumes({"d1": 0.5, "d2": 0.5})
+    got = []
+    bay.volume_changed.connect(lambda dev, level: got.append((dev, level)))
+    track = bay._fader_track(bay._boxes()[0])
+    top = QPoint(int(track.x()), int(track.top()))
+    mid = QPoint(int(track.x()), int(track.top() + track.height() / 2))
+    QTest.mousePress(bay, Qt.MouseButton.LeftButton, pos=top)
+    QTest.mouseMove(bay, mid)
+    QTest.mouseRelease(bay, Qt.MouseButton.LeftButton, pos=mid)
+    assert got[0] == ("d1", 1.0)
+    assert got[-1][0] == "d1" and 0.45 <= got[-1][1] <= 0.55
+    assert bay._fader_drag is None
+
+
+def test_set_volumes_keeps_dragged_fader(qapp):
+    bay, _apps = make_bay(qapp)
+    bay._volumes = {"d1": 0.3}
+    bay._fader_drag = "d1"
+    bay.set_volumes({"d1": 0.1, "d2": 0.9})
+    assert bay._volumes == {"d1": 0.3, "d2": 0.9}

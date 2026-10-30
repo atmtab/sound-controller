@@ -11,7 +11,7 @@ from PySide6.QtGui import (
     QPen,
     QRadialGradient,
 )
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QToolTip, QWidget
 
 from sound_controller.audio.devices import OutputDevice
 from sound_controller.audio.sessions import RunningApp
@@ -33,6 +33,10 @@ BOX_PAD = 14
 MIN_BOX_H = 82
 BOX_GAP = 10
 JACK_R = 12
+FADER_X = 18  # расстояние оси фейдера от правого края блока
+FADER_PAD_TOP = 16
+FADER_PAD_BOTTOM = 14
+FADER_STEP = 0.05
 
 
 def split_name(name: str) -> tuple[str, str]:
@@ -52,6 +56,7 @@ class _Box:
 
 class PatchBay(QWidget):
     assigned = Signal(object, object)  # RunningApp, id устройства или None
+    volume_changed = Signal(str, float)  # id устройства, громкость 0..1
 
     def __init__(self) -> None:
         super().__init__()
@@ -60,6 +65,8 @@ class PatchBay(QWidget):
         self._assign: dict[str, str] = {}
         self._offset = 0.0
         self._drag: str | None = None
+        self._volumes: dict[str, float] = {}
+        self._fader_drag: str | None = None
         self._pos = QPointF()
         self.setMouseTracking(True)
         self.setMinimumHeight(220)
@@ -74,6 +81,14 @@ class PatchBay(QWidget):
         if self._drag not in {a.name for a in self._apps}:
             self._drag = None
         self._clamp_offset()
+        self.update()
+
+    def set_volumes(self, volumes: dict[str, float]) -> None:
+        """Громкости устройств; фейдер, который сейчас двигают, не трогаем."""
+        keep = self._volumes.get(self._fader_drag) if self._fader_drag else None
+        self._volumes = dict(volumes)
+        if self._fader_drag and keep is not None:
+            self._volumes[self._fader_drag] = keep
         self.update()
 
     def set_assignment(self, name: str, device_id: str | None) -> None:
@@ -133,6 +148,29 @@ class PatchBay(QWidget):
             boxes.append(_Box(device, color, rect, slots, users[device.id]))
             top += heights[i] + BOX_GAP
         return boxes
+
+    @staticmethod
+    def _fader_track(box: _Box) -> QRectF:
+        x = box.rect.right() - FADER_X
+        return QRectF(x, box.rect.top() + FADER_PAD_TOP, 0, box.rect.height() - FADER_PAD_TOP - FADER_PAD_BOTTOM)
+
+    def _fader_at(self, boxes, pos: QPointF) -> _Box | None:
+        for box in boxes:
+            t = self._fader_track(box)
+            if abs(pos.x() - t.x()) <= 12 and t.top() - 8 <= pos.y() <= t.bottom() + 8:
+                return box
+        return None
+
+    def _set_fader(self, box: _Box, y: float) -> None:
+        t = self._fader_track(box)
+        level = 1.0 - (y - t.top()) / max(1.0, t.height())
+        level = round(max(0.0, min(1.0, level)) * 100) / 100
+        if level != self._volumes.get(box.device.id):
+            self._volumes[box.device.id] = level
+            self.volume_changed.emit(box.device.id, level)
+            tip_at = self.mapToGlobal(QPointF(t.x() - 44, y).toPoint())
+            QToolTip.showText(tip_at, f"{round(level * 100)}%", self)
+            self.update()
 
     def _cable_ends(self, boxes):
         """name -> (точка у приложения, точка у устройства, цвет)."""
@@ -245,7 +283,7 @@ class PatchBay(QWidget):
 
         title, subtitle = split_name(box.device.name)
         text_left = rect.left() + 58
-        width = int(rect.right() - 14 - text_left)
+        width = int(rect.right() - 36 - text_left)
         font = QFont("Georgia", 10)
         font.setBold(True)
         p.setFont(font)
@@ -269,6 +307,39 @@ class PatchBay(QWidget):
 
         for k, slot in enumerate(box.slots):
             self._paint_jack(p, slot, tint=box.color if k > 0 else None, glow=hovered and k == 0)
+        self._paint_fader(p, box)
+
+    def _paint_fader(self, p: QPainter, box: _Box) -> None:
+        level = self._volumes.get(box.device.id)
+        t = self._fader_track(box)
+        groove = QRectF(t.x() - 3, t.top(), 6, t.height())
+        p.setPen(QPen(QColor(255, 220, 150, 50), 1))
+        p.setBrush(QColor(8, 3, 1, 230))
+        p.drawRoundedRect(groove, 3, 3)
+        p.setPen(QPen(QColor(BRASS_DARK), 1))
+        for k in range(11):
+            y = t.top() + t.height() * k / 10
+            w = 5 if k % 5 == 0 else 3
+            p.drawLine(QPointF(t.x() + 7, y), QPointF(t.x() + 7 + w, y))
+        if level is None:
+            return
+        fill_h = t.height() * level
+        fill = QColor(box.color)
+        fill.setAlpha(200)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(fill)
+        p.drawRoundedRect(QRectF(groove.x() + 1, t.bottom() - fill_h, 4, fill_h), 2, 2)
+
+        knob = QRectF(t.x() - 9, t.bottom() - fill_h - 6, 18, 12)
+        cap = QLinearGradient(knob.topLeft(), knob.bottomLeft())
+        cap.setColorAt(0.0, BRASS_LIGHT)
+        cap.setColorAt(0.5, BRASS)
+        cap.setColorAt(1.0, BRASS_DARK)
+        p.setPen(QPen(QColor("#2a1a05"), 1.2))
+        p.setBrush(cap)
+        p.drawRoundedRect(knob, 3, 3)
+        p.setPen(QPen(QColor("#2a1a05"), 1.6))
+        p.drawLine(QPointF(knob.left() + 3, knob.center().y()), QPointF(knob.right() - 3, knob.center().y()))
 
     def _paint_jack(self, p: QPainter, c: QPointF, tint: QColor | None = None, glow: bool = False) -> None:
         p.setPen(QPen(QColor("#2a1a05"), 1.2))
@@ -400,7 +471,13 @@ class PatchBay(QWidget):
     def mousePressEvent(self, event) -> None:
         if event.button() != Qt.MouseButton.LeftButton:
             return
-        index = self._app_hit(event.position(), self._boxes())
+        boxes = self._boxes()
+        fader = self._fader_at(boxes, event.position())
+        if fader is not None:
+            self._fader_drag = fader.device.id
+            self._set_fader(fader, event.position().y())
+            return
+        index = self._app_hit(event.position(), boxes)
         if index is None:
             return
         self._drag = self._apps[index].name
@@ -410,13 +487,25 @@ class PatchBay(QWidget):
 
     def mouseMoveEvent(self, event) -> None:
         self._pos = event.position()
+        boxes = self._boxes()
+        if self._fader_drag:
+            box = next((b for b in boxes if b.device.id == self._fader_drag), None)
+            if box is not None:
+                self._set_fader(box, self._pos.y())
+            return
         if self._drag:
             self.update()
             return
-        hit = self._app_hit(self._pos, self._boxes())
+        if self._fader_at(boxes, self._pos) is not None:
+            self.setCursor(Qt.CursorShape.SizeVerCursor)
+            return
+        hit = self._app_hit(self._pos, boxes)
         self.setCursor(Qt.CursorShape.OpenHandCursor if hit is not None else Qt.CursorShape.ArrowCursor)
 
     def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and self._fader_drag:
+            self._fader_drag = None
+            return
         if event.button() != Qt.MouseButton.LeftButton or not self._drag:
             return
         name, self._drag = self._drag, None
@@ -429,6 +518,12 @@ class PatchBay(QWidget):
         self.update()
 
     def wheelEvent(self, event) -> None:
+        box = self._fader_at(self._boxes(), event.position())
+        if box is not None:
+            level = self._volumes.get(box.device.id, 0.0) + event.angleDelta().y() / 120 * FADER_STEP
+            t = self._fader_track(box)
+            self._set_fader(box, t.bottom() - t.height() * max(0.0, min(1.0, level)))
+            return
         self._offset -= event.angleDelta().y() / 120 * (ROW_H + ROW_GAP) * 1.5
         self._clamp_offset()
         self.update()

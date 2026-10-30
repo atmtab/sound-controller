@@ -1,6 +1,7 @@
 """Список активных устройств вывода звука."""
 from dataclasses import dataclass
 
+import comtypes
 from pycaw.constants import DEVICE_STATE, EDataFlow
 from pycaw.pycaw import AudioUtilities
 
@@ -37,7 +38,28 @@ def find_virtual_cable(devices: list[OutputDevice] | None = None) -> OutputDevic
     return None
 
 
+def _endpoint_volume(device_id: str):
+    device = AudioUtilities.CreateDevice(AudioUtilities.GetDeviceEnumerator().GetDevice(device_id))
+    return device.EndpointVolume
+
+
+def get_volume(device_id: str) -> float | None:
+    """Громкость устройства 0..1 или None, если устройство недоступно."""
+    try:
+        return float(_endpoint_volume(device_id).GetMasterVolumeLevelScalar())
+    except (comtypes.COMError, OSError):
+        return None
+
+
+def set_volume(device_id: str, level: float) -> bool:
+    try:
+        _endpoint_volume(device_id).SetMasterVolumeLevelScalar(max(0.0, min(1.0, level)), None)
+        return True
+    except (comtypes.COMError, OSError):
+        return False
+
+
 if __name__ == "__main__":
     for device in list_output_devices():
         mark = "  [VB-Cable]" if device.is_virtual_cable else ""
-        print(f"{device.name}\n    {device.id}{mark}")
+        print(f"{device.name}\n    {device.id}{mark}  громкость={get_volume(device.id)}")

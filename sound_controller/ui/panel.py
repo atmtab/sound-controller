@@ -40,6 +40,7 @@ class Panel(Chassis):
 
         self._bay = PatchBay()
         self._bay.assigned.connect(self._on_assigned)
+        self._bay.volume_changed.connect(self._on_volume)
 
         self._status = Lcd(HINT, wrap=True, height=44)
         self._all_check = RockerSwitch()
@@ -129,6 +130,12 @@ class Panel(Chassis):
             include_all=self._all_check.isChecked(),
             always=set(self._config.app_devices),
         )
+        volumes = {}
+        for device in devices:
+            level = devices_mod.get_volume(device.id)
+            if level is not None:
+                volumes[device.id] = level
+        self._bay.set_volumes(volumes)
         signature = (
             tuple((a.name, a.pids, a.playing) for a in apps),
             tuple(d.id for d in devices),
@@ -150,6 +157,10 @@ class Panel(Chassis):
         )
         if not apps:
             self.show_message("Нет запущенных приложений")
+
+    def _on_volume(self, device_id: str, level: float) -> None:
+        if not devices_mod.set_volume(device_id, level):
+            self.show_message("Не удалось изменить громкость устройства")
 
     def _on_assigned(self, app: sessions.RunningApp, device_id) -> None:
         try:

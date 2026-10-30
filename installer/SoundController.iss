@@ -1,5 +1,5 @@
 #define AppName "Sound Controller"
-#define AppVersion "1.0.0"
+#define AppVersion "1.1.0"
 #define AppExe "SoundController.exe"
 #define AppUrl "https://github.com/atmtab/sound-controller"
 
